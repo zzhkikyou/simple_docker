@@ -439,7 +439,7 @@ function enter_docker()
             EXEC nsenter -m -u -i -p -t $pid $program
         else
             if [[ "$program" == "$def_program" ]];then
-                EXEC nsenter -m -u -i -p -t $pid su $user
+                EXEC nsenter -m -u -i -p -t $pid su - $user
             else
                 EXEC nsenter -m -u -i -p -t $pid su $user -c \"$program\"
             fi
@@ -494,26 +494,27 @@ function check_describe()
 function usage()
 {
     echo ""
-    echo -e "\033[31mUsage:	simple_docker.sh [OPTIONS]\033[0m"
+    echo -e "\033[33mUsage:	simple_docker.sh [OPTIONS]\033[0m"
     echo ""
-    echo -e "\033[31mOptions:\033[0m"
-    echo -e "\033[31m       -r string   program (default: /bin/bash)\033[0m"
-    echo -e "\033[31m       -p string   ip (-p ipout=ipin / -p ipin)\033[0m"
-    echo -e "\033[31m       -d          daemon\033[0m"
-    echo -e "\033[31m       -l          list all simple_docker\033[0m"
-    echo -e "\033[31m       -S          stop all simple_docker\033[0m"
-    echo -e "\033[31m       -s string   stop dockerid\033[0m"
-    echo -e "\033[31m       -g string   enter dockerid\033[0m"
-    echo -e "\033[31m       -f          force run as root\033[0m"
-    echo -e "\033[31m       -a string   set describe\033[0m"
-    echo -e "\033[31m       -A string   grep by describe\033[0m"
-    echo -e "\033[31m       -c number   cpu usage rate\033[0m"
-    echo -e "\033[31m       -m number   memory in MB\033[0m"
+    echo -e "\033[33mOptions:\033[0m"
+    echo -e "\033[33m       -r string   program (default: /bin/bash)\033[0m"
+    echo -e "\033[33m       -p string   ip (-p ipout=ipin / -p ipin)\033[0m"
+    echo -e "\033[33m       -d          daemon\033[0m"
+    echo -e "\033[33m       -l          list all simple_docker\033[0m"
+    echo -e "\033[33m       -S          stop all simple_docker\033[0m"
+    echo -e "\033[33m       -s string   stop dockerid\033[0m"
+    echo -e "\033[33m       -g string   enter dockerid\033[0m"
+    echo -e "\033[33m       -u string   user (run as user)\033[0m"
+    echo -e "\033[33m       -f          ignore warn when you run as root\033[0m"
+    echo -e "\033[33m       -a string   set describe\033[0m"
+    echo -e "\033[33m       -A string   grep by describe\033[0m"
+    echo -e "\033[33m       -c number   cpu usage rate\033[0m"
+    echo -e "\033[33m       -m number   memory in MB\033[0m"
 }
 
 function main()
 {
-    # echo "main:$# $@ ||| [$1], [$2], [$3], [$4], [$5]"
+    #echo "main:$# $@ ||| [$1], [$2], [$3], [$4], [$5]"
     check_software "unshare"
     check_software "nsenter"
     check_software "pstree"
@@ -524,6 +525,17 @@ function main()
     check_software "ping"
 
     mkdir -p $basepath
+
+    if [[ $# -ge 1 ]] && [[ $1 != -* ]]; then
+        echo -e "\033[31minvalid option!!!\033[0m"
+        usage
+        exit 1
+    elif [[ $# -ge 1 ]] && [[ $1 == - ]]; then
+        echo -e "\033[31minvalid option!!!\033[0m"
+        usage
+        exit 1
+    fi
+  
     while getopts u:t:c:s:e:r:p:m:g:a:A:vhzfdTDlS option
     do
         case "$option"
@@ -619,20 +631,20 @@ function main()
                         continue
                     fi
                     {
-                        echo "ip:$ipparam" 
-                        echo "netns:$virnetns"
-                        echo "ppid:$$"
+                        echo "dockerid:$id"
+                        echo "program:$program"
                         echo "pid:$pid"
+                        echo "ppid:$$"
+                        echo "user:$user"
+                        echo "memoryMB:$memory"
+                        echo "cpu:$cpu"
+                        echo "netns:$virnetns"
+                        echo "ip:$ipparam" 
                         if [[ "$describeparam" == "" ]];then
                             echo "describe:virtual-$id"
                         else
                             echo "describe:$describeparam"
                         fi
-                        echo "dockerid:$id"
-                        echo "program:$program"
-                        echo "memoryMB:$memory"
-                        echo "cpu:$cpu"
-                        echo "user:$user"
                     } >> "$infopath"
 
                     control_memory "$pid"
