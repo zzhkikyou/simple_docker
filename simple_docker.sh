@@ -23,7 +23,10 @@ user="root"
 idpath=""
 endpath=""
 infopath=""
+runpath=""
 virhostname=""
+
+# 1. main 创建child main 2. child main 创建info，等main填入数据 3. main填入数据，等child创建run 4. main发现run，开始获取子进程号
 
 function TEST()
 {
@@ -46,7 +49,7 @@ function check_return()
 function check_ip() {
     IP=$1
     Res=$(echo $IP|awk -F. '$1<=255&&$2<=255&&$3<=255&&$4<=255{print "yes"}')
-    if echo $IP|grep -E "^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$">/dev/null; then
+    if echo $IP|grep -E "^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}/{0,1}[0-9]{0,2}$">/dev/null; then
         if [ ${Res:-no} != "yes" ]; then
             echo -e "\033[31mIP <$IP> not available!\033[0m"
             throw 1
@@ -256,7 +259,7 @@ function Program()
 {
     for((i=0;i<10;i++)); do # 等主进程写入进程号
         sleep 1
-        get_param_in_file $infopath pid
+        get_param_in_file $infopath ppid
         if [[ $get_param_res == "" ]]; then
                 echo  -e "\033[33mwaitting...\033[0m"
                 continue
@@ -269,7 +272,6 @@ function Program()
          echo -e "\033[31mmain process can not find child pid, exit!!!\033[0m"
          throw 1
     fi
-
     get_param_in_file $infopath netns
     virnetns=$get_param_res
     
@@ -284,6 +286,9 @@ function Program()
         echo -e "\033[33m${line##*:}\033[0m"
         done < $infopath
     fi
+
+    echo -e "\033[33m\ndocker[$id] start!!!\033[0m"
+    touch $runpath # 通知父进程
 
     if [[ "$user" == "root" ]]; then
         if [[ $force == false ]]; then
@@ -328,7 +333,6 @@ function is_process_exist()
 
 function endoperator()
 {
-    echo -e "\033[31mresource recovery...\033[0m"
     sleep 1.5
     if [ -f $endpath ];then
         while read line
@@ -350,6 +354,7 @@ function prepare()
     idpath=$basepath/$id
     endpath=$idpath/end_$id
     infopath=$idpath/info_$id
+    runpath=$idpath/run_$id
 }
 
 function stop()
@@ -357,24 +362,20 @@ function stop()
     echo "stop [$1]"
     id=$1
     prepare
-    findpid=false
     if [ -f $infopath ];then
         while read line
         do
             if [[ $line == pid:* ]]; then
                 kill -9 ${line##*:}
-                findpid=true
             fi
         done < $infopath
-
-        if [[ $findpid == false ]];then  # 一旦没有写入进程号
-            while read line
-            do
-                if [[ $line == ppid:* ]]; then
-                    pstree ${line##*:} -p|awk 'BEGIN{ FS="(";RS=")" } NF>1 {print $NF}'|xargs kill >/dev/null 2>&1
-                fi
-            done < $infopath
-        fi
+        sleep 0.3
+        while read line
+        do
+            if [[ $line == ppid:* ]]; then
+                pstree ${line##*:} -p|awk 'BEGIN{ FS="(";RS=")" } NF>1 {print $NF}'|xargs kill >/dev/null 2>&1
+            fi
+        done < $infopath
     fi
     endoperator   
 }
@@ -604,14 +605,10 @@ function main()
     done
 
     if [[ "$id" != "" ]]; then
-        try
-        (
-            touch "$infopath"
-            Program
-        ) 
-        catch || {
-            echo -e "\033[31mdocker[$id] $program is stopped!!!\033[0m"
-        }
+        touch "$infopath"
+        Program
+        echo -e "\033[31mdocker[$id] $program is stopped!!!\033[0m"
+        echo -e "\033[31mresource recovery...\033[0m"
     else
         id=$RANDOM
         prepare
@@ -624,32 +621,37 @@ function main()
         (   # 获取容器0号线程pid
             for((i=0;i<30;i++)); do
                 sleep 0.5
-                if [ -f $infopath ]; then
-                    pid=0
-                    pid=`pstree -p $$ |grep "unshare("|awk 'BEGIN{ FS="(";RS=")" } NF>1 {print $NF}'|xargs echo |awk -F' ' '{print $3}'|xargs echo`
-                    if [[ $pid == 0 ]];then
-                        continue
-                    fi
+                if [ -f $infopath ]; then  # 创建info后，写入 ppid
                     {
                         echo "dockerid:$id"
-                        echo "program:$program"
-                        echo "pid:$pid"
-                        echo "ppid:$$"
                         echo "user:$user"
-                        echo "memoryMB:$memory"
-                        echo "cpu:$cpu"
                         echo "netns:$virnetns"
                         echo "ip:$ipparam" 
+                        echo "memoryMB:$memory"
+                        echo "program:$program"
+                        echo "cpu:$cpu"
                         if [[ "$describeparam" == "" ]];then
                             echo "describe:virtual-$id"
                         else
                             echo "describe:$describeparam"
                         fi
+                        echo "ppid:$$"
                     } >> "$infopath"
 
-                    control_memory "$pid"
-                    control_cpu "$pid"
-                    return
+                    for((i=0;i<30;i++)); do
+                        sleep 0.5
+                        if [ -f $runpath ];then
+                            pid=0
+                            pid=`pstree -p $$ |grep "unshare("|awk 'BEGIN{ FS="(";RS=")" } NF>1 {print $NF}'|xargs echo |awk -F' ' '{print $3}'|xargs echo`
+                            if [[ $pid == 0 ]];then
+                                continue
+                            fi
+                            echo "pid:$pid" >> "$infopath"
+                            control_memory "$pid"
+                            control_cpu "$pid"
+                            return
+                        fi
+                    done
                 fi
             done 
         ) &
