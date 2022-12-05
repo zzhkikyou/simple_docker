@@ -1,5 +1,7 @@
 #!/bin/bash
 
+version="1.0.0"
+
 basepath="/tmp/simple_docker"
 def_program="/bin/bash"
 program=$def_program
@@ -314,22 +316,6 @@ function list()
     done
 }
 
-
-function usage()
-{
-    echo ""
-    echo -e "\033[31mUsage:	simple_docker.sh [OPTIONS]\033[0m"
-    echo ""
-    echo -e "\033[31mOptions:\033[0m"
-    echo -e "\033[31m       -r string   program (default: /bin/bash)\033[0m"
-    echo -e "\033[31m       -p string   ip (-p ipout=ipin / -p ipin)\033[0m"
-    echo -e "\033[31m       -d          daemon\033[0m"
-    echo -e "\033[31m       -l          list all simple_docker\033[0m"
-    echo -e "\033[31m       -S          stop all simple_docker\033[0m"
-    echo -e "\033[31m       -s string   stop dockerid\033[0m"
-    echo -e "\033[31m       -g string   enter dockerid\033[0m"
-}
-
 function is_process_exist()
 {
     if ps -p $1 > /dev/null
@@ -396,10 +382,11 @@ function stop()
 function control_memory()
 {
     if [ $memory != 0 ]; then
-        mkdir -p /sys/fs/cgroup/memory/$id
-        echo $1 > /sys/fs/cgroup/memory/$id/cgroup.procs
-        echo $memory > /sys/fs/cgroup/memory/$id/memory.limit_in_bytes
-        echo "rmdir /sys/fs/cgroup/memory/$id" >> $endpath
+        memory=`expr $memory \* 1048576`
+        mkdir -p /sys/fs/cgroup/memory/"$id"
+        echo "$1" > /sys/fs/cgroup/memory/"$id"/cgroup.procs
+        echo "$memory" > /sys/fs/cgroup/memory/"$id"/memory.limit_in_bytes
+        echo "rmdir /sys/fs/cgroup/memory/$id" >> "$endpath"
     fi
 }
 
@@ -408,7 +395,6 @@ function control_cpu()
     if [ $cpu != 0 ]; then
         mkdir -p /sys/fs/cgroup/cpu/$id
         echo ${cpu}000 > /sys/fs/cgroup/cpu/$id/cpu.cfs_quota_us
-        echo 100000 > /sys/fs/cgroup/cpu/$id/cpu.cfs_period_us
         echo $1 >>  /sys/fs/cgroup/cpu/$id/tasks
         echo "rmdir /sys/fs/cgroup/cpu/$id" >> $endpath
     fi
@@ -470,10 +456,10 @@ function show_top()
     get_param_in_file $infopath pid
     if [[ $get_param_res != "" ]];then
         pid=$get_param_res
-        ps -e -o pidns,pid,ppid,user,stat,pcpu,rss,time --sort -pcpu,+rss | head -1 | awk '{print $2, "\t", $3, "\t", $4, "\t", $5, "\t", $6, "\t", $7, "\t", $8}'
+        ps -e -o pidns,pid,ppid,user,stat,pcpu,rss,time --sort -pcpu,+rss | head -1 | awk '{printf("%-16s%-16s%-16s%-16s%-16s%-16s%-16scmd\n",$2,$3,$4,$5,$6,$7,$8)}'
 
         pidns_t=`readlink /proc/$pid/ns/pid |awk -F'[][]' '{print $2}'|xargs echo`
-        ps -e -o pidns,pid,ppid,user,stat,pcpu,rss,time,cmd --sort -pcpu,+rss |awk -v pidns="$pidns_t" '$1==pidns {print $2 ,"\t", $3,"\t", $4,"\t", $5,"\t", $6,"\t", $7,"\t", $8,"\t",  $9}'
+        ps -e -o pidns,pid,ppid,user,stat,pcpu,rss,time,cmd --sort -pcpu,+rss |awk -v pidns="$pidns_t" '$1==pidns {printf("%-16s%-16s%-16s%-16s%-16s%-16s%-16s%-16s\n",$2,$3,$4,$5,$6,$7,$8,$9)}'
     fi
 
 }
@@ -505,6 +491,26 @@ function check_describe()
     done
 }
 
+function usage()
+{
+    echo ""
+    echo -e "\033[31mUsage:	simple_docker.sh [OPTIONS]\033[0m"
+    echo ""
+    echo -e "\033[31mOptions:\033[0m"
+    echo -e "\033[31m       -r string   program (default: /bin/bash)\033[0m"
+    echo -e "\033[31m       -p string   ip (-p ipout=ipin / -p ipin)\033[0m"
+    echo -e "\033[31m       -d          daemon\033[0m"
+    echo -e "\033[31m       -l          list all simple_docker\033[0m"
+    echo -e "\033[31m       -S          stop all simple_docker\033[0m"
+    echo -e "\033[31m       -s string   stop dockerid\033[0m"
+    echo -e "\033[31m       -g string   enter dockerid\033[0m"
+    echo -e "\033[31m       -f          force run as root\033[0m"
+    echo -e "\033[31m       -a string   set describe\033[0m"
+    echo -e "\033[31m       -A string   grep by describe\033[0m"
+    echo -e "\033[31m       -c number   cpu usage rate\033[0m"
+    echo -e "\033[31m       -m number   memory in MB\033[0m"
+}
+
 function main()
 {
     # echo "main:$# $@ ||| [$1], [$2], [$3], [$4], [$5]"
@@ -518,10 +524,14 @@ function main()
     check_software "ping"
 
     mkdir -p $basepath
-    while getopts u:t:c:s:e:r:p:m:g:a:A:zfdTDlS option
+    while getopts u:t:c:s:e:r:p:m:g:a:A:vhzfdTDlS option
     do
         case "$option"
         in
+            v) echo -e "$0 version: \033[31m$version\033[0m"
+                exit 0;;
+            h) usage
+                exit 0;;
             A) describeparam=$OPTARG
                 check_describe
                 exit 0;;
@@ -584,11 +594,7 @@ function main()
     if [[ "$id" != "" ]]; then
         try
         (
-            echo "dockerid:$id" >> $infopath
-            echo "program:$program" >> $infopath
-            echo "memory:$memory" >> $infopath
-            echo "cpu:$cpu" >> $infopath
-            echo "user:$user" >> $infopath
+            touch "$infopath"
             Program
         ) 
         catch || {
@@ -612,17 +618,25 @@ function main()
                     if [[ $pid == 0 ]];then
                         continue
                     fi
-                    echo "ip:$ipparam" >> $infopath
-                    echo "netns:$virnetns" >> $infopath
-                    echo "ppid:$$" >> $infopath
-                    echo "pid:$pid" >> $infopath
-                    if [[ "$describeparam" == "" ]];then
-                        echo "describe:virtual-$id" >> $infopath
-                    else
-                        echo "describe:$describeparam" >> $infopath
-                    fi
-                    control_memory $pid
-                    control_cpu $pid
+                    {
+                        echo "ip:$ipparam" 
+                        echo "netns:$virnetns"
+                        echo "ppid:$$"
+                        echo "pid:$pid"
+                        if [[ "$describeparam" == "" ]];then
+                            echo "describe:virtual-$id"
+                        else
+                            echo "describe:$describeparam"
+                        fi
+                        echo "dockerid:$id"
+                        echo "program:$program"
+                        echo "memoryMB:$memory"
+                        echo "cpu:$cpu"
+                        echo "user:$user"
+                    } >> "$infopath"
+
+                    control_memory "$pid"
+                    control_cpu "$pid"
                     return
                 fi
             done 
