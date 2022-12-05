@@ -1,9 +1,10 @@
 #!/bin/bash
 
 basepath="/tmp/simple_docker"
-def_program="echo default program enter!!!;/bin/bash;echo default program exit!!!"
+def_program="/bin/bash"
 program=$def_program
-daemon_def_program="while true; do sleep 1; done"
+daemon_def_program="sh $0 -z"
+describeparam=""
 ipparam=""
 
 force=false
@@ -242,7 +243,7 @@ function record_net_virtual_end()
 
 function EXEC()
 {
-    if [[ $ipparam == "" ]];then
+    if [[ $virnetns == "" ]];then
         eval "$@"
     else
         eval "ip netns exec $virnetns $@"
@@ -266,9 +267,13 @@ function Program()
          echo -e "\033[31mmain process can not find child pid, exit!!!\033[0m"
          throw 1
     fi
+
+    get_param_in_file $infopath netns
+    virnetns=$get_param_res
     
     virhostname=virtual-$id
     EXEC hostname $virhostname
+
     if [ -f $infopath ]; then
         echo ""
         while read line
@@ -282,9 +287,13 @@ function Program()
         if [[ $force == false ]]; then
             echo -e "\033[31mbe careful!!! run as root now, \"-f\" to ignore this warn.\033[0m"
         fi
-         EXEC $program 
+        EXEC $program 
     else
-         EXEC "su $user -c $program" 
+        if [[ "$program" == "$def_program" ]];then
+            EXEC su $user
+        else
+            EXEC su $user -c \"$program\"
+        fi
     fi
 }
 
@@ -333,6 +342,7 @@ function is_process_exist()
 
 function endoperator()
 {
+    echo -e "\033[31mresource recovery...\033[0m"
     sleep 1.5
     if [ -f $endpath ];then
         while read line
@@ -421,10 +431,18 @@ function get_param_in_file()
 
 function enter_docker()
 {
+    if [[ ! -f $infopath ]]; then
+        echo -e "\033[31mdocker[$id] not exist!!!\033[0m"
+        exit 1
+    fi
+
     echo "enter [$id]"
     get_param_in_file $infopath pid
     if [[ $get_param_res != "" ]];then
         pid=$get_param_res
+
+        get_param_in_file $infopath netns
+        virnetns=$get_param_res
 
         get_param_in_file $infopath user
         user=$get_param_res
@@ -432,11 +450,17 @@ function enter_docker()
             if [[ $force == false ]]; then
                 echo -e "\033[31mbe careful!!! run as root now, \"-f\" to ignore this warn.\033[0m"
             fi
-            nsenter -m -u -i -n -p -t $pid 
+            EXEC nsenter -m -u -i -p -t $pid $program
         else
-            nsenter -m -u -i -n -p -t $pid su $user -c $program
+            if [[ "$program" == "$def_program" ]];then
+                EXEC nsenter -m -u -i -p -t $pid su $user
+            else
+                EXEC nsenter -m -u -i -p -t $pid su $user -c \"$program\"
+            fi
         fi
         echo "exit"
+    else
+        echo -e "\033[31menter docker fail!!! unknown error occured\033[0m"       
     fi
 }
 
@@ -462,8 +486,28 @@ function check_software()
     fi
 }
 
+function check_describe()
+{
+    for id in `ls $basepath/`
+    do
+        prepare
+        if [ -f $infopath ]; then
+            get_param_in_file $infopath describe
+            if [[ "$get_param_res" == "$describeparam" ]]; then
+                echo "---------"
+                while read line
+                do
+                    printf "%-16s: " ${line%%:*}
+                    echo ${line##*:}
+                done < $infopath
+            fi
+        fi
+    done
+}
+
 function main()
 {
+    # echo "main:$# $@ ||| [$1], [$2], [$3], [$4], [$5]"
     check_software "unshare"
     check_software "nsenter"
     check_software "pstree"
@@ -474,15 +518,20 @@ function main()
     check_software "ping"
 
     mkdir -p $basepath
-    while getopts u:t:c:s:e:r:p:m:g:fdTDlS option
+    while getopts u:t:c:s:e:r:p:m:g:a:A:zfdTDlS option
     do
         case "$option"
         in
+            A) describeparam=$OPTARG
+                check_describe
+                exit 0;;
+            a) describeparam=$OPTARG;;
+            z) 
+                shift
+                while true;do sleep 1;done
+                exit 0;;
             f) force=true;;
-            u) user=$OPTARG
-                if [[ "$user" == "" ]]; then
-                     user=root
-                fi;;
+            u) user=$OPTARG;;
             t) id=$OPTARG
                 prepare
                 show_top
@@ -514,7 +563,7 @@ function main()
                 exit 0;;
             d) 
                 if [[ $OPTIND != 2 ]]; then
-                    echo  -e "\033[31m\"-d\" must follow \"$0\"!!!\033[0m"
+                    echo  -e "\033[31m\"-d\" must the first option in \"$0\"!!!\033[0m"
                     exit 1
                 fi
                 shift
@@ -537,12 +586,9 @@ function main()
         (
             echo "dockerid:$id" >> $infopath
             echo "program:$program" >> $infopath
-            echo "ip:$ipparam" >> $infopath
             echo "memory:$memory" >> $infopath
             echo "cpu:$cpu" >> $infopath
             echo "user:$user" >> $infopath
-            net_virtual
-            check_return
             Program
         ) 
         catch || {
@@ -551,6 +597,11 @@ function main()
     else
         id=$RANDOM
         prepare
+        mkdir -p $idpath
+        touch $endpath
+
+        net_virtual
+        check_return
 
         (   # 获取容器0号线程pid
             for((i=0;i<30;i++)); do
@@ -561,17 +612,21 @@ function main()
                     if [[ $pid == 0 ]];then
                         continue
                     fi
+                    echo "ip:$ipparam" >> $infopath
+                    echo "netns:$virnetns" >> $infopath
                     echo "ppid:$$" >> $infopath
                     echo "pid:$pid" >> $infopath
+                    if [[ "$describeparam" == "" ]];then
+                        echo "describe:virtual-$id" >> $infopath
+                    else
+                        echo "describe:$describeparam" >> $infopath
+                    fi
                     control_memory $pid
                     control_cpu $pid
                     return
                 fi
             done 
         ) &
-
-        mkdir -p $idpath
-        touch $endpath
 
         trap "on_exit" SIGINT SIGQUIT SIGTERM
         unshare --uts --pid --mount-proc --fork sh $0 "$@" "-e" $id 
@@ -581,3 +636,4 @@ function main()
 }
 
 main "$@"
+ 
