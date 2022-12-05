@@ -1,11 +1,11 @@
 #!/bin/bash
 
-version="1.0.0"
+version="version 1.0.0"
 
 basepath="/tmp/simple_docker"
 def_program="/bin/bash"
 program=$def_program
-daemon_def_program="sh $0 -z"
+daemon_def_program="./$0 -z"
 describeparam=""
 ipparam=""
 
@@ -495,7 +495,7 @@ function check_describe()
 function usage()
 {
     echo ""
-    echo -e "\033[33mUsage:	simple_docker.sh [OPTIONS]\033[0m"
+    echo -e "\033[33mUsage:	simple_docker [OPTIONS]\033[0m"
     echo ""
     echo -e "\033[33mOptions:\033[0m"
     echo -e "\033[33m       -r string   program (default: /bin/bash)\033[0m"
@@ -541,7 +541,7 @@ function main()
     do
         case "$option"
         in
-            v) echo -e "$0 version: \033[31m$version\033[0m"
+            v) echo -e "$0 \033[31m$version\033[0m"
                 exit 0;;
             h) usage
                 exit 0;;
@@ -590,7 +590,7 @@ function main()
                     exit 1
                 fi
                 shift
-                (umask 0;setsid sh $0 "$@" "-D" &) & #-D在最后
+                (umask 0;setsid ./$0 "$@" "-D" &) & #-D在最后
                 exit 0;;
             D)  
                 if [[ "$program" == "$def_program" ]];then
@@ -657,7 +657,7 @@ function main()
         ) &
 
         trap "on_exit" SIGINT SIGQUIT SIGTERM
-        unshare --uts --pid --mount-proc --fork sh $0 "$@" "-e" $id 
+        unshare --uts --pid --mount-proc --fork ./$0 "$@" "-e" $id 
         wait
         endoperator
     fi
