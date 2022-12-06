@@ -5,7 +5,7 @@ version="version 1.0.0"
 basepath="/tmp/simple_docker"
 def_program="/bin/bash"
 program=$def_program
-daemon_def_program="./$0 -z"
+daemon_def_program="sh $0 -z"
 describeparam=""
 ipparam=""
 
@@ -15,13 +15,15 @@ memory=0
 cpu=0
 ipin=""
 ipout=""
+ipinwithoutmask=""
+ipoutwithoutmask=""
 virnetns=""
 vethin=""
 vethout=""
 id=""
 user="root"
 idpath=""
-endpath=""
+#endpath=""
 infopath=""
 runpath=""
 virhostname=""
@@ -88,11 +90,22 @@ function ip_mapping()
     ipout=${ipmap%%=*}
     check_ip $ipout 
 
-    virnetns="ns$RANDOM"
+    if [[ $ipin =~ "/" ]];then
+        ipinwithoutmask=${ipin%%/*}
+    else
+        ipinwithoutmask=$ipin
+    fi
+    if [[ $ipout =~ "/" ]];then
+        ipoutwithoutmask=${ipout%%/*}
+    else
+        ipoutwithoutmask=$ipout
+    fi
+
+    virnetns="virtual-$id"
     vethin="veth$RANDOM"
     vethout="veth$RANDOM"
 
-    echo -e "\033[33mMappingMode: netns[$virnetns] vethin[$vethin] vethout[$vethout] ipout[$ipout] ipin[$ipin]\033[0m"
+    echo -e "\033[33m\nMappingMode: netns[$virnetns] vethin[$vethin] vethout[$vethout] ipout[$ipout] ipin[$ipin] ipoutnomask[$ipinwithoutmask] ipinnomask[$ipinwithoutmask]\033[0m"
 
     # 校验netns是否已经存在
     for tmpns in $(ip netns list)
@@ -133,18 +146,19 @@ function ip_mapping()
         TEST ip netns exec $virnetns ip link set $vethin name eth0
         TEST ip netns exec $virnetns ip link set dev eth0 up
         TEST ip netns exec $virnetns ip link set dev lo up
-        TEST route add $ipin dev $vethout
-        TEST ip netns exec $virnetns route add $ipout dev eth0
+
+        TEST route add $ipinwithoutmask dev $vethout
+        TEST ip netns exec $virnetns route add $ipoutwithoutmask dev eth0
 
         echo -e "\033[33mNet virtual Success!!!\033[0m"
 
         # 检查连通性
-        echo -e "\033[33mCheck $ipin Connectivity...\033[0m"
-        TEST ping -c6 -i0.3 -W1 $ipin &>/dev/null
-        echo -e "\033[33mConnectivity:$ipin is established!\033[0m"
-        echo -e "\033[33mCheck $ipout Connectivity...\033[0m"
-        TEST ip netns exec $virnetns ping -c6 -i0.3 -W1 $ipout &>/dev/null
-        echo -e "\033[33mConnectivity:$ipout is established!\033[0m"
+        echo -e "\033[33mCheck $ipinwithoutmask Connectivity...\033[0m"
+        TEST ping -c6 -i0.3 -W1 $ipinwithoutmask &>/dev/null
+        echo -e "\033[33mConnectivity:$ipinwithoutmask is established!\033[0m"
+        echo -e "\033[33mCheck $ipoutwithoutmask Connectivity...\033[0m"
+        TEST ip netns exec $virnetns ping -c6 -i0.3 -W1 $ipoutwithoutmask &>/dev/null
+        echo -e "\033[33mConnectivity:$ipoutwithoutmask is established!\033[0m"
         echo -e "\033[33mConnectivity is ok\033[0m"
     )
     catch || 
@@ -152,7 +166,7 @@ function ip_mapping()
         echo -e "\033[31moperator fail\033[0m"
         ret=1
     }
-    record_net_virtual_end
+    # record_net_virtual_end
     return $ret
 }
 
@@ -163,11 +177,17 @@ function ip_local()
     ipin=$ipparam
     check_ip $ipin
 
-    virnetns="ns$RANDOM"
+    virnetns="virtual-$id"
     vethin="veth$RANDOM"
     vethout="veth$RANDOM"
 
-    echo -e "\033[33mLocalMode: netns[$virnetns] vethin[$vethin] vethout[$vethout] ipin[$ipin]\033[0m"
+    if [[ $ipin =~ "/" ]];then
+        ipinwithoutmask=${ipin%%/*}
+    else
+        ipinwithoutmask=$ipin
+    fi
+
+    echo -e "\033[33m\nLocalMode: netns[$virnetns] vethin[$vethin] vethout[$vethout] ipin[$ipin] ipinnomask[$ipinwithoutmask]\033[0m"
 
     # 校验netns是否已经存在
     for tmpns in $(ip netns list)
@@ -215,7 +235,7 @@ function ip_local()
         echo -e "\033[31moperator fail\033[0m"
         ret=1
     }
-    record_net_virtual_end
+    # record_net_virtual_end
     return $ret
 }
 
@@ -233,18 +253,20 @@ function net_virtual()
     return $?
 }
 
-function record_net_virtual_end()
-{
-    if [[ $bIpMapping == true ]];then
-        echo "ip netns exec $virnetns route del $ipout dev $vethin >/dev/null 2>&1" >> $endpath
-        echo "route del $ipin dev $vethout >/dev/null 2>&1" >> $endpath
-        echo "ip link delete $vethout >/dev/null 2>&1" >> $endpath
-        echo "ip netns del $virnetns >/dev/null 2>&1" >> $endpath
-    else
-        echo "ip link delete $vethout >/dev/null 2>&1" >> $endpath
-        echo "ip netns del $virnetns >/dev/null 2>&1" >> $endpath
-    fi
-}
+# function record_net_virtual_end()
+# {
+#     if [[ $bIpMapping == true ]];then
+#         :
+#         #echo "ip netns exec $virnetns route del $ipoutwithoutmask dev $vethin >/dev/null 2>&1" >> $endpath
+#         #echo "route del $ipinwithoutmask dev $vethout >/dev/null 2>&1" >> $endpath
+#         #echo "ip link delete $vethout >/dev/null 2>&1" >> $endpath
+#         #echo "ip netns del $virnetns >/dev/null 2>&1" >> $endpath
+#     else
+#         :
+#         #echo "ip link delete $vethout >/dev/null 2>&1" >> $endpath
+#         #echo "ip netns del $virnetns >/dev/null 2>&1" >> $endpath
+#     fi
+# }
 
 function EXEC()
 {
@@ -333,26 +355,27 @@ function is_process_exist()
 
 function endoperator()
 {
-    sleep 1.5
-    if [ -f $endpath ];then
-        while read line
-        do
-        eval $line
-        done < $endpath
-    fi
+    # sleep 1.5
+    # if [ -f $endpath ];then
+    #     while read line
+    #     do
+    #     eval $line
+    #     done < $endpath
+    # fi
     rm -rf $idpath
 }
 
 function on_exit()
 {
     echo -e "\033[31mdocker exit!!!\033[0m"
-    endoperator
+    stop $id
+    #endoperator
 }
 
 function prepare()
 {
     idpath=$basepath/$id
-    endpath=$idpath/end_$id
+    #endpath=$idpath/end_$id
     infopath=$idpath/info_$id
     runpath=$idpath/run_$id
 }
@@ -362,20 +385,24 @@ function stop()
     echo "stop [$1]"
     id=$1
     prepare
-    if [ -f $infopath ];then
-        while read line
-        do
-            if [[ $line == pid:* ]]; then
-                kill -9 ${line##*:}
-            fi
-        done < $infopath
-        sleep 0.3
-        while read line
-        do
-            if [[ $line == ppid:* ]]; then
-                pstree ${line##*:} -p|awk 'BEGIN{ FS="(";RS=")" } NF>1 {print $NF}'|xargs kill >/dev/null 2>&1
-            fi
-        done < $infopath
+    if [ -d $idpath ];then
+        if [ -f $infopath ];then
+            while read line
+            do
+                if [[ $line == pid:* ]]; then
+                    if [[ "${line##*:}" != "" ]]; then
+                        kill -9 ${line##*:} >/dev/null 2>&1
+                    fi
+                fi
+            done < $infopath
+            sleep 0.5
+            while read line
+            do
+                if [[ $line == ppid:* ]]; then
+                    pstree ${line##*:} -p|awk 'BEGIN{ FS="(";RS=")" } NF>1 {print $NF}'|xargs kill >/dev/null 2>&1
+                fi
+            done < $infopath
+        fi
     fi
     endoperator   
 }
@@ -384,20 +411,28 @@ function control_memory()
 {
     if [ $memory != 0 ]; then
         memory=`expr $memory \* 1048576`
-        mkdir -p /sys/fs/cgroup/memory/"$id"
-        echo "$1" > /sys/fs/cgroup/memory/"$id"/cgroup.procs
-        echo "$memory" > /sys/fs/cgroup/memory/"$id"/memory.limit_in_bytes
-        echo "rmdir /sys/fs/cgroup/memory/$id" >> "$endpath"
+        mkdir -p /sys/fs/cgroup/memory/"virtual-$id"
+        echo "$1" >> /sys/fs/cgroup/memory/"virtual-$id"/cgroup.procs
+        pidarr=`pstree -p $1 |awk 'BEGIN{ FS="(";RS=")" } NF>1 {print $NF}'|xargs echo`
+        for(( i=0;i<${#pidarr[@]};i++)) 
+        do
+            echo "${array[i]}" >> /sys/fs/cgroup/memory/"virtual-$id"/cgroup.procs
+        done
+        echo "$memory" > /sys/fs/cgroup/memory/"virtual-$id"/memory.limit_in_bytes
     fi
 }
 
 function control_cpu()
 {
     if [ $cpu != 0 ]; then
-        mkdir -p /sys/fs/cgroup/cpu/$id
-        echo ${cpu}000 > /sys/fs/cgroup/cpu/$id/cpu.cfs_quota_us
-        echo $1 >>  /sys/fs/cgroup/cpu/$id/tasks
-        echo "rmdir /sys/fs/cgroup/cpu/$id" >> $endpath
+        mkdir -p /sys/fs/cgroup/cpu/"virtual-$id"
+        echo ${cpu}000 > /sys/fs/cgroup/cpu/"virtual-$id"/cpu.cfs_quota_us
+        echo "$1" >>  /sys/fs/cgroup/cpu/"virtual-$id"/tasks
+        pidarr=`pstree -p $1 |awk 'BEGIN{ FS="(";RS=")" } NF>1 {print $NF}'|xargs echo`
+        for(( i=0;i<${#pidarr[@]};i++)) 
+        do
+            echo "${array[i]}" >> /sys/fs/cgroup/cpu/"virtual-$id"/tasks
+        done
     fi
 }
 
@@ -480,7 +515,7 @@ function check_describe()
         prepare
         if [ -f $infopath ]; then
             get_param_in_file $infopath describe
-            if [[ "$get_param_res" == "$describeparam" ]]; then
+            if [[ $get_param_res == *$describeparam* ]]; then
                 echo "---------"
                 while read line
                 do
@@ -511,6 +546,46 @@ function usage()
     echo -e "\033[33m       -A string   grep by describe\033[0m"
     echo -e "\033[33m       -c number   cpu usage rate\033[0m"
     echo -e "\033[33m       -m number   memory in MB\033[0m"
+}
+
+function clear_env()
+{
+    tmpid=$id
+    # 先清除所有已失效的memory 和 cgroup
+    for fsname in `ls /sys/fs/cgroup/memory/`
+    do
+        if [[ $fsname == virtual-* ]]; then
+            id=${fsname##*-}
+            prepare
+            if [ ! -d $idpath ]; then
+                rmdir /sys/fs/cgroup/memory/$fsname
+            fi
+        fi
+    done
+
+    for fsname in `ls /sys/fs/cgroup/cpu/`
+    do
+        if [[ $fsname == virtual-* ]]; then
+            id=${fsname##*-}
+            prepare
+            if [ ! -d $idpath ]; then
+                rmdir /sys/fs/cgroup/cpu/$fsname
+            fi
+        fi
+    done
+
+    for fsname in `ip netns list`
+    do
+        if [[ $fsname == virtual-* ]]; then
+            id=${fsname##*-}
+            prepare
+            if [ ! -d $idpath ]; then
+                ip netns del $fsname
+            fi
+        fi
+    done
+    id=$tmpid
+    prepare
 }
 
 function main()
@@ -583,6 +658,8 @@ function main()
                 do
                     stop $id
                 done
+                sleep 1
+                clear_env
                 exit 0;;
             d) 
                 if [[ $OPTIND != 2 ]]; then
@@ -590,7 +667,8 @@ function main()
                     exit 1
                 fi
                 shift
-                (umask 0;setsid ./$0 "$@" "-D" &) & #-D在最后
+                (umask 0;setsid sh $0 "$@" "-D" &) & #-D在最后
+                sleep 2
                 exit 0;;
             D)  
                 if [[ "$program" == "$def_program" ]];then
@@ -610,11 +688,14 @@ function main()
         echo -e "\033[31mdocker[$id] $program is stopped!!!\033[0m"
         echo -e "\033[31mresource recovery...\033[0m"
     else
+        time="$(date "+%Y/%m/%d %H.%M.%S")"
         id=$RANDOM
         prepare
         mkdir -p $idpath
-        touch $endpath
-
+        clear_env
+        control_memory "$$"
+        control_cpu "$$"
+        #touch $endpath
         net_virtual
         check_return
 
@@ -636,19 +717,20 @@ function main()
                             echo "describe:$describeparam"
                         fi
                         echo "ppid:$$"
+                        echo "createtime:$time"
                     } >> "$infopath"
 
                     for((i=0;i<30;i++)); do
                         sleep 0.5
                         if [ -f $runpath ];then
                             pid=0
+                            #pstree -Sp $$
+                            #pstree -p $$ |grep "unshare("|awk 'BEGIN{ FS="(";RS=")" } NF>1 {print $NF}'|xargs echo
                             pid=`pstree -p $$ |grep "unshare("|awk 'BEGIN{ FS="(";RS=")" } NF>1 {print $NF}'|xargs echo |awk -F' ' '{print $3}'|xargs echo`
                             if [[ $pid == 0 ]];then
                                 continue
                             fi
-                            echo "pid:$pid" >> "$infopath"
-                            control_memory "$pid"
-                            control_cpu "$pid"
+                            echo "pid:$pid" >> "$infopath"                            
                             return
                         fi
                     done
@@ -657,9 +739,9 @@ function main()
         ) &
 
         trap "on_exit" SIGINT SIGQUIT SIGTERM
-        unshare --uts --pid --mount-proc --fork ./$0 "$@" "-e" $id 
+        unshare --uts --pid --mount-proc --fork sh $0  "$@" "-e" $id
         wait
-        endoperator
+        stop $id
     fi
 }
 
