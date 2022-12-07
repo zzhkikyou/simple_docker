@@ -1,8 +1,8 @@
 #!/bin/bash
 
-version="version 1.0.0"
+version="version 1.0.1"
 
-basepath="/tmp/simple_docker"
+basepath="/tmp/virtualization"
 def_program="/bin/bash"
 program=$def_program
 daemon_def_program="sh $0 -z"
@@ -10,7 +10,6 @@ describeparam=""
 ipparam=""
 
 force=false
-bIpMapping=false
 memory=0
 cpu=0
 ipin=""
@@ -23,7 +22,6 @@ vethout=""
 id=""
 user="root"
 idpath=""
-#endpath=""
 infopath=""
 runpath=""
 virhostname=""
@@ -41,12 +39,6 @@ function TEST()
     fi
 }
 
-function check_return()
-{
-    if [[ $? != 0 ]]; then
-        throw 1
-    fi
-}
 
 function check_ip() {
     IP=$1
@@ -80,10 +72,67 @@ function catch()
     return $ex_code
 }
 
+function check_eth_exist()
+{
+    etharray=(`ifconfig | grep ^[a-z] | awk -F: '{print $1}'`)
+    for((i=0;i<${#etharray[@]};i++)) 
+    do
+        if [[ ${etharray[$i]} == "$1" ]]; then
+            return 1
+        fi
+    done
+    return 0
+}
+
+function check_eth_exist_in_ns()
+{
+    etharray=(`ip netns exec $2 ifconfig | grep ^[a-z] | awk -F: '{print $1}'`)
+    for((i=0;i<${#etharray[@]};i++)) 
+    do
+        if [[ ${etharray[$i]} == "$1" ]]; then
+            return 1
+        fi
+    done
+    return 0
+}
+
+function check_ip_exist()
+{
+    iparray=(`ifconfig | grep 'inet' | sed 's/^.*inet //g' | sed 's/ *netmask.*$//g'`)
+    for((i=0;i<${#iparray[@]};i++)) 
+    do
+        if [[ ${iparray[$i]} == "$1" ]];then
+            return 1
+        fi
+    done
+    return 0
+}
+
+function check_ip_exist_in_ns()
+{
+    iparray=(`ip netns exec $2 ifconfig | grep 'inet' | sed 's/^.*inet //g' | sed 's/ *netmask.*$//g'`)
+    for((i=0;i<${#iparray[@]};i++)) 
+    do
+        if [[ ${iparray[$i]} == "$1" ]];then
+            return 1
+        fi
+    done
+    return 0
+}
+
+function check_netns()
+{
+    for tmpns in $(ip netns list)
+    do
+        if [[ "$1" == "$tmpns" ]];then
+            return 1
+        fi
+    done
+    return 0
+}
+
 function ip_mapping()
 {
-    bIpMapping=true
-    ret=0
     ipmap=$ipparam
     ipin=${ipmap##*=}
     check_ip $ipin
@@ -105,75 +154,73 @@ function ip_mapping()
     vethin="veth$RANDOM"
     vethout="veth$RANDOM"
 
-    echo -e "\033[33m\nMappingMode: netns[$virnetns] vethin[$vethin] vethout[$vethout] ipout[$ipout] ipin[$ipin] ipoutnomask[$ipinwithoutmask] ipinnomask[$ipinwithoutmask]\033[0m"
+    echo -e "\033[33m\nMappingMode:\nnetns[$virnetns] vethin[$vethin] vethout[$vethout] ipout[$ipout] ipin[$ipin] ipoutnomask[$ipinwithoutmask] ipinnomask[$ipinwithoutmask]\033[0m"
 
     # 校验netns是否已经存在
-    for tmpns in $(ip netns list)
-    do
-        if [[ $virnetns == "$tmpns" ]];then
-            echo -e "\033[31mnetns $tmpns is exist, please try again or clean your env\033[0m"
-            return 1
-        fi
-    done
+    check_netns "$virnetns"
+    if [[ $? == 1 ]];then
+        echo -e "\033[31mnetns $tmpns is exist, please try again or clean your env\033[0m"
+        throw 1
+    fi
 
     # 校验vethout是否存在
-    etharray=(`ifconfig | grep ^[a-z] | awk -F: '{print $1}'`)
-    iparray=(`ifconfig | grep 'inet' | sed 's/^.*inet //g' | sed 's/ *netmask.*$//g'`)
-    for((i=0;i<${#etharray[@]};i++)) 
-    do
-        if [[ ${etharray[$i]} == "$vethout" ]]; then
-            echo -e "\033[31meth name $vethout is exist, please try again or clean your env\033[0m"
-            return 1
-        elif [[ ${iparray[$i]} == "$ipout" ]];then
-            echo -e "\033[31mipout $ipout is exist, please set another ipout\033[0m"
-            return 1
-        fi
-    done
+    check_eth_exist "$vethout"
+    if [[ $? == 1 ]];then
+        echo -e "\033[31meth name $vethout is exist, please try again or clean your env\033[0m"
+        throw 1
+    fi
 
-    try
-    (
-        TEST ip netns add $virnetns
-        TEST ip link add $vethin type veth peer name $vethout
-        #ip link show $vethin
-        #ip link show $vethout
+    check_ip_exist "$ipout"
+    if [[ $? == 1 ]];then
+        echo -e "\033[31mipout $ipout is exist, please set another ipout\033[0m"
+        throw 1
+    fi
 
-        TEST ip link set $vethin netns $virnetns
-        #ip addr add $ipout/24 dev $vethout
-        TEST ip addr add $ipout dev $vethout
-        TEST ip link set dev $vethout up
-        #ip netns exec $virnetns ip addr add $ipin/24 dev $vethin
-        TEST ip netns exec $virnetns ip addr add $ipin dev $vethin
-        TEST ip netns exec $virnetns ip link set $vethin name eth0
-        TEST ip netns exec $virnetns ip link set dev eth0 up
-        TEST ip netns exec $virnetns ip link set dev lo up
+    TEST ip netns add $virnetns
+    check_netns $virnetns
+    if [[ $? == 0 ]];then
+        echo -e "\033[31mnetns[$virnetns] create fail!!!\033[0m"
+        throw 1
+    fi
+    TEST ip link add $vethin type veth peer name $vethout
+    
+    TEST ip link set $vethin netns $virnetns
+    TEST ip addr add $ipout dev $vethout
+    TEST ip link set dev $vethout up
+    check_eth_exist $vethout
+    if [[ $? == 0 ]];then
+        echo -e "\033[31m$vethout start fail!!!\033[0m"
+        throw 1
+    fi
 
-        TEST route add $ipinwithoutmask dev $vethout
-        TEST ip netns exec $virnetns route add $ipoutwithoutmask dev eth0
+    #ip netns exec $virnetns ip addr add $ipin/24 dev $vethin
+    TEST ip netns exec $virnetns ip addr add $ipin dev $vethin
+    TEST ip netns exec $virnetns ip link set $vethin name eth0
+    TEST ip netns exec $virnetns ip link set dev eth0 up
+    check_eth_exist_in_ns eth0 $virnetns
+    if [[ $? == 0 ]];then
+        echo -e "\033[31m$vethin start fail!!!\033[0m"
+        throw 1
+    fi
+    TEST ip netns exec $virnetns ip link set dev lo up
 
-        echo -e "\033[33mNet virtual Success!!!\033[0m"
+    TEST route add $ipinwithoutmask dev $vethout
+    TEST ip netns exec $virnetns route add $ipoutwithoutmask dev eth0
 
-        # 检查连通性
-        echo -e "\033[33mCheck $ipinwithoutmask Connectivity...\033[0m"
-        TEST ping -c6 -i0.3 -W1 $ipinwithoutmask &>/dev/null
-        echo -e "\033[33mConnectivity:$ipinwithoutmask is established!\033[0m"
-        echo -e "\033[33mCheck $ipoutwithoutmask Connectivity...\033[0m"
-        TEST ip netns exec $virnetns ping -c6 -i0.3 -W1 $ipoutwithoutmask &>/dev/null
-        echo -e "\033[33mConnectivity:$ipoutwithoutmask is established!\033[0m"
-        echo -e "\033[33mConnectivity is ok\033[0m"
-    )
-    catch || 
-    {
-        echo -e "\033[31moperator fail\033[0m"
-        ret=1
-    }
-    # record_net_virtual_end
-    return $ret
+    echo -e "\033[33mNet virtual Success!!!\033[0m"
+
+    # 检查连通性
+    echo -e "\033[33mCheck $ipinwithoutmask Connectivity...\033[0m"
+    TEST ping -c3 -i0.01 -W1 $ipinwithoutmask &>/dev/null
+    echo -e "\033[33mConnectivity:$ipinwithoutmask is established!\033[0m"
+    echo -e "\033[33mCheck $ipoutwithoutmask Connectivity...\033[0m"
+    TEST ip netns exec $virnetns ping -c3 -i0.01 -W1 $ipoutwithoutmask &>/dev/null
+    echo -e "\033[33mConnectivity:$ipoutwithoutmask is established!\033[0m"
+    echo -e "\033[33mConnectivity is ok\033[0m"
 }
 
 function ip_local()
 {
-    bIpMapping=false
-    ret=0
     ipin=$ipparam
     check_ip $ipin
 
@@ -187,62 +234,56 @@ function ip_local()
         ipinwithoutmask=$ipin
     fi
 
-    echo -e "\033[33m\nLocalMode: netns[$virnetns] vethin[$vethin] vethout[$vethout] ipin[$ipin] ipinnomask[$ipinwithoutmask]\033[0m"
+    echo -e "\033[33m\nLocalMode:\nnetns[$virnetns] vethin[$vethin] vethout[$vethout] ipin[$ipin] ipinnomask[$ipinwithoutmask]\033[0m"
 
     # 校验netns是否已经存在
-    for tmpns in $(ip netns list)
-    do
-        if [[ $virnetns == "$tmpns" ]];then
-            echo -e "\033[31mnetns $tmpns is exist, please try again or clean your env\033[0m"
-            return 1
-        fi
-    done
+    check_netns "$virnetns"
+    if [[ $? == 1 ]];then
+        echo -e "\033[31mnetns $tmpns is exist, please try again or clean your env\033[0m"
+        throw 1
+    fi
 
     # 校验vethout是否存在
-    etharray=(`ifconfig | grep ^[a-z] | awk -F: '{print $1}'`)
-    iparray=(`ifconfig | grep 'inet' | sed 's/^.*inet //g' | sed 's/ *netmask.*$//g'`)
-    for((i=0;i<${#etharray[@]};i++)) 
-    do
-        if [[ ${etharray[$i]} == "$vethout" ]]; then
-            echo -e "\033[31meth name $vethout is exist, please try again or clean your env\033[0m"
-            return 1
-        elif [[ ${iparray[$i]} == "$ipout" ]];then
-            echo -e "\033[31mipout $ipout is exist, please set another ipout\033[0m"
-            return 1
-        fi
-    done
-    
-    try
-    (
-        TEST ip netns add $virnetns
-        TEST ip link add $vethin type veth peer name $vethout
-        #ip link show $vethin
-        #ip link show $vethout
+    check_eth_exist "$vethout"
+    if [[ $? == 1 ]];then
+        echo -e "\033[31meth name $vethout is exist, please try again or clean your env\033[0m"
+        throw 1
+    fi
 
-        TEST ip link set $vethin netns $virnetns
-        #ip addr add $ipout/24 dev $vethout
+    check_ip_exist "$ipout"
+    if [[ $? == 1 ]];then
+        echo -e "\033[31mipout $ipout is exist, please set another ipout\033[0m"
+        throw 1
+    fi
 
-        #ip netns exec $virnetns ip addr add $ipin/24 dev $vethin
-        TEST ip netns exec $virnetns ip addr add $ipin dev $vethin
-        TEST ip netns exec $virnetns ip link set $vethin name eth0
-        TEST ip netns exec $virnetns ip link set dev eth0 up
-        TEST ip netns exec $virnetns ip link set dev lo up
+    TEST ip netns add $virnetns
+    check_netns $virnetns
+    if [[ $? == 0 ]];then
+        echo -e "\033[31mnetns[$virnetns] create fail!!!\033[0m"
+        throw 1
+    fi
 
-        echo -e "\033[33mNet virtual Success!!!\033[0m"
-    )
-    catch || 
-    {
-        echo -e "\033[31moperator fail\033[0m"
-        ret=1
-    }
-    # record_net_virtual_end
-    return $ret
+    TEST ip link add $vethin type veth peer name $vethout
+
+    TEST ip link set $vethin netns $virnetns
+
+    #ip netns exec $virnetns ip addr add $ipin/24 dev $vethin
+    TEST ip netns exec $virnetns ip addr add $ipin dev $vethin
+    TEST ip netns exec $virnetns ip link set $vethin name eth0
+    TEST ip netns exec $virnetns ip link set dev eth0 up
+    check_eth_exist_in_ns eth0 $virnetns
+    if [[ $? == 0 ]];then
+        echo -e "\033[31m$vethin start fail!!!\033[0m"
+        throw 1
+    fi
+    TEST ip netns exec $virnetns ip link set dev lo up
+    echo -e "\033[33mNet virtual Success!!!\033[0m"
 }
 
 function net_virtual()
 {
     if [[ $ipparam == "" ]];then
-        return 0
+        return
     fi
 
     if [[ $ipparam =~ "=" ]];then
@@ -250,23 +291,7 @@ function net_virtual()
     else
         ip_local
     fi
-    return $?
 }
-
-# function record_net_virtual_end()
-# {
-#     if [[ $bIpMapping == true ]];then
-#         :
-#         #echo "ip netns exec $virnetns route del $ipoutwithoutmask dev $vethin >/dev/null 2>&1" >> $endpath
-#         #echo "route del $ipinwithoutmask dev $vethout >/dev/null 2>&1" >> $endpath
-#         #echo "ip link delete $vethout >/dev/null 2>&1" >> $endpath
-#         #echo "ip netns del $virnetns >/dev/null 2>&1" >> $endpath
-#     else
-#         :
-#         #echo "ip link delete $vethout >/dev/null 2>&1" >> $endpath
-#         #echo "ip netns del $virnetns >/dev/null 2>&1" >> $endpath
-#     fi
-# }
 
 function EXEC()
 {
@@ -309,7 +334,7 @@ function Program()
         done < $infopath
     fi
 
-    echo -e "\033[33m\ndocker[$id] start!!!\033[0m"
+    echo -e "\033[33m\nvirtual[$id] start!!!\033[0m"
     touch $runpath # 通知父进程
 
     if [[ "$user" == "root" ]]; then
@@ -353,58 +378,41 @@ function is_process_exist()
     fi
 }
 
-function endoperator()
-{
-    # sleep 1.5
-    # if [ -f $endpath ];then
-    #     while read line
-    #     do
-    #     eval $line
-    #     done < $endpath
-    # fi
-    rm -rf $idpath
-}
-
 function on_exit()
 {
-    echo -e "\033[31mdocker exit!!!\033[0m"
+    echo -e "\033[31mvirtual[$id] exit!!!\033[0m"
     stop $id
-    #endoperator
+    exit 0
 }
 
 function prepare()
 {
     idpath=$basepath/$id
-    #endpath=$idpath/end_$id
     infopath=$idpath/info_$id
     runpath=$idpath/run_$id
 }
 
 function stop()
 {
-    echo "stop [$1]"
     id=$1
     prepare
     if [ -d $idpath ];then
-        if [ -f $infopath ];then
-            while read line
-            do
-                if [[ $line == pid:* ]]; then
-                    if [[ "${line##*:}" != "" ]]; then
-                        kill -9 ${line##*:} >/dev/null 2>&1
-                    fi
-                fi
-            done < $infopath
-            sleep 0.5
-            while read line
-            do
-                if [[ $line == ppid:* ]]; then
-                    pstree ${line##*:} -p|awk 'BEGIN{ FS="(";RS=")" } NF>1 {print $NF}'|xargs kill >/dev/null 2>&1
-                fi
-            done < $infopath
+        echo -e "\033[31mvirtual[$id] resource recovery...\033[0m"
+        get_param_in_file $infopath pid
+        stoppid=$get_param_res
+        get_param_in_file $infopath ppid
+        stopppid=$get_param_res
+        rm -rf $idpath
+
+        if [[ $stoppid != "" ]]; then
+            kill -9 $stoppid >/dev/null 2>&1
+        fi
+        sleep 0.1
+        if [[ $stopppid != "" ]];then
+            pstree ${line##*:} -p|awk 'BEGIN{ FS="(";RS=")" } NF>1 {print $NF}'|xargs kill >/dev/null 2>&1
+
         fi
     fi
-    endoperator   
 }
 
 function control_memory()
@@ -451,10 +459,10 @@ function get_param_in_file()
     fi    
 }
 
-function enter_docker()
+function enter_virtual()
 {
     if [[ ! -f $infopath ]]; then
-        echo -e "\033[31mdocker[$id] not exist!!!\033[0m"
+        echo -e "\033[31mvirtual[$id] not exist!!!\033[0m"
         exit 1
     fi
 
@@ -482,20 +490,20 @@ function enter_docker()
         fi
         echo "exit"
     else
-        echo -e "\033[31menter docker fail!!! unknown error occured\033[0m"       
+        echo -e "\033[31menter virtual fail!!! unknown error occured\033[0m"       
     fi
 }
 
 function show_top()
 {
-    echo "docker[$id] top:"
+    echo "virtual[$id] top:"
     get_param_in_file $infopath pid
     if [[ $get_param_res != "" ]];then
         pid=$get_param_res
-        ps -e -o pidns,pid,ppid,user,stat,pcpu,rss,time --sort -pcpu,+rss | head -1 | awk '{printf("%-16s%-16s%-16s%-16s%-16s%-16s%-16scmd\n",$2,$3,$4,$5,$6,$7,$8)}'
+        ps -e -o pidns,pid,ppid,user,stat,pcpu,rss,time --sort -pcpu,+rss | head -1 | awk '{printf("%-8s%-8s%-12s%-8s%-8s%-8s%-12scmd\n",$2,$3,$4,$5,$6,$7,$8)}'
 
         pidns_t=`readlink /proc/$pid/ns/pid |awk -F'[][]' '{print $2}'|xargs echo`
-        ps -e -o pidns,pid,ppid,user,stat,pcpu,rss,time,cmd --sort -pcpu,+rss |awk -v pidns="$pidns_t" '$1==pidns {printf("%-16s%-16s%-16s%-16s%-16s%-16s%-16s%-16s\n",$2,$3,$4,$5,$6,$7,$8,$9)}'
+        ps -e -o pidns,pid,ppid,user,stat,pcpu,rss,time,cmd --sort -pcpu,+rss |awk -v pidns="$pidns_t" '$1==pidns {printf("%-8s%-8s%-12s%-8s%-8s%-8s%-12s%-32s\n",$2,$3,$4,$5,$6,$7,$8,$9)}'
     fi
 
 }
@@ -530,16 +538,16 @@ function check_describe()
 function usage()
 {
     echo ""
-    echo -e "\033[33mUsage:	simple_docker [OPTIONS]\033[0m"
+    echo -e "\033[33mUsage:	virtualization [OPTIONS]\033[0m"
     echo ""
     echo -e "\033[33mOptions:\033[0m"
     echo -e "\033[33m       -r string   program (default: /bin/bash)\033[0m"
     echo -e "\033[33m       -p string   ip (-p ipout=ipin / -p ipin)\033[0m"
     echo -e "\033[33m       -d          daemon\033[0m"
-    echo -e "\033[33m       -l          list all simple_docker\033[0m"
-    echo -e "\033[33m       -S          stop all simple_docker\033[0m"
-    echo -e "\033[33m       -s string   stop dockerid\033[0m"
-    echo -e "\033[33m       -g string   enter dockerid\033[0m"
+    echo -e "\033[33m       -l          list all virtualization\033[0m"
+    echo -e "\033[33m       -S          stop all virtualization\033[0m"
+    echo -e "\033[33m       -s string   stop virtualid\033[0m"
+    echo -e "\033[33m       -g string   enter virtualid\033[0m"
     echo -e "\033[33m       -u string   user (run as user)\033[0m"
     echo -e "\033[33m       -f          ignore warn when you run as root\033[0m"
     echo -e "\033[33m       -a string   set describe\033[0m"
@@ -641,7 +649,8 @@ function main()
                     show_top
                 done
                 exit 0;;
-            s) stop $OPTARG
+            s) 
+                stop $OPTARG
                 exit 0;;
             e) id=$OPTARG
                 prepare;;
@@ -651,7 +660,7 @@ function main()
             c) cpu=$OPTARG;;
             g) id=$OPTARG
                 prepare
-                enter_docker
+                enter_virtual
                 exit 0;;
             S)
                 for id in `ls $basepath/`
@@ -685,8 +694,7 @@ function main()
     if [[ "$id" != "" ]]; then
         touch "$infopath"
         Program
-        echo -e "\033[31mdocker[$id] $program is stopped!!!\033[0m"
-        echo -e "\033[31mresource recovery...\033[0m"
+        echo -e "\033[31mvirtual[$id] stopped!!!\033[0m"
     else
         time="$(date "+%Y/%m/%d %H.%M.%S")"
         id=$RANDOM
@@ -695,16 +703,17 @@ function main()
         clear_env
         control_memory "$$"
         control_cpu "$$"
-        #touch $endpath
         net_virtual
-        check_return
+        if [[ $? != 0 ]]; then
+            throw 1
+        fi
 
         (   # 获取容器0号线程pid
             for((i=0;i<30;i++)); do
                 sleep 0.5
                 if [ -f $infopath ]; then  # 创建info后，写入 ppid
                     {
-                        echo "dockerid:$id"
+                        echo "virtualid:$id"
                         echo "user:$user"
                         echo "netns:$virnetns"
                         echo "ip:$ipparam" 
