@@ -396,7 +396,6 @@ function stop()
     id=$1
     prepare
     if [ -d $idpath ];then
-        echo -e "\033[31mvirtual[$id] resource recovery...\033[0m"
         get_param_in_file $infopath pid
         stoppid=$get_param_res
         get_param_in_file $infopath ppid
