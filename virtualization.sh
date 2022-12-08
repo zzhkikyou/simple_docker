@@ -39,7 +39,6 @@ function TEST()
     fi
 }
 
-
 function check_ip() {
     IP=$1
     Res=$(echo $IP|awk -F. '$1<=255&&$2<=255&&$3<=255&&$4<=255{print "yes"}')
@@ -151,8 +150,8 @@ function ip_mapping()
     fi
 
     virnetns="virtual-$id"
-    vethin="veth$RANDOM"
-    vethout="veth$RANDOM"
+    vethin="veth$[$(date +%s%N)%1000000]"
+    vethout="veth$[$(date +%s%N)%1000000]"
 
     echo -e "\033[33m\nMappingMode:\nnetns[$virnetns] vethin[$vethin] vethout[$vethout] ipout[$ipout] ipin[$ipin] ipoutnomask[$ipinwithoutmask] ipinnomask[$ipinwithoutmask]\033[0m"
 
@@ -225,8 +224,8 @@ function ip_local()
     check_ip $ipin
 
     virnetns="virtual-$id"
-    vethin="veth$RANDOM"
-    vethout="veth$RANDOM"
+    vethin="veth$[$(date +%s%N)%1000000]"
+    vethout="veth$[$(date +%s%N)%1000000]"
 
     if [[ $ipin =~ "/" ]];then
         ipinwithoutmask=${ipin%%/*}
@@ -697,7 +696,7 @@ function main()
         echo -e "\033[31mvirtual[$id] stopped!!!\033[0m"
     else
         time="$(date "+%Y/%m/%d %H.%M.%S")"
-        id=$RANDOM
+        id=$[$(date +%s%N)%1000000]
         prepare
         mkdir -p $idpath
         clear_env
