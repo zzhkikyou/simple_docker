@@ -442,6 +442,7 @@ function control_memory()
             echo "${array[i]}" >> /sys/fs/cgroup/memory/"virtual-$id"/cgroup.procs >/dev/null 2>&1
         done
         echo "$memory" > /sys/fs/cgroup/memory/"virtual-$id"/memory.limit_in_bytes
+        memory=`expr $memory \/ 1048576`
     fi
 }
 
