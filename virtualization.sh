@@ -24,7 +24,9 @@ user="root"
 idpath=""
 infopath=""
 runpath=""
+rwlayerpath=""
 virhostname=""
+imagedir=""
 
 # 1. main 创建child main 2. child main 创建info，等main填入数据 3. main填入数据，等child创建run 4. main发现run，开始获取子进程号
 
@@ -336,6 +338,20 @@ function Program()
     echo -e "\033[33m\nvirtual[$id] start!!!\033[0m"
     touch $runpath # 通知父进程
 
+    if [[ "$imagedir" != "" ]];then
+        echo "rwlayerpath $rwlayerpath, imagedir $imagedir"
+        mkdir -p $rwlayerpath
+
+        mount -t aufs -o dirs=$rwlayerpath:$imagedir none $idpath
+
+        mkdir -p $idpath/old_root
+        cd $idpath
+        pivot_root . ./old_root
+
+        mount -t proc proc /proc
+        umount -l /old_root
+    fi
+
     if [[ "$user" == "root" ]]; then
         if [[ $force == false ]]; then
             echo -e "\033[31mbe careful!!! run as root now, \"-f\" to ignore this warn.\033[0m"
@@ -389,6 +405,7 @@ function prepare()
     idpath=$basepath/$id
     infopath=$idpath/info_$id
     runpath=$idpath/run_$id
+    rwlayerpath=$idpath/rw_$id
 }
 
 function stop()
@@ -422,7 +439,7 @@ function control_memory()
         pidarr=`pstree -p $1 |awk 'BEGIN{ FS="(";RS=")" } NF>1 {print $NF}'|xargs echo`
         for(( i=0;i<${#pidarr[@]};i++)) 
         do
-            echo "${array[i]}" >> /sys/fs/cgroup/memory/"virtual-$id"/cgroup.procs
+            echo "${array[i]}" >> /sys/fs/cgroup/memory/"virtual-$id"/cgroup.procs >/dev/null 2>&1
         done
         echo "$memory" > /sys/fs/cgroup/memory/"virtual-$id"/memory.limit_in_bytes
     fi
@@ -437,7 +454,7 @@ function control_cpu()
         pidarr=`pstree -p $1 |awk 'BEGIN{ FS="(";RS=")" } NF>1 {print $NF}'|xargs echo`
         for(( i=0;i<${#pidarr[@]};i++)) 
         do
-            echo "${array[i]}" >> /sys/fs/cgroup/cpu/"virtual-$id"/tasks
+            echo "${array[i]}" >> /sys/fs/cgroup/cpu/"virtual-$id"/tasks >/dev/null 2>&1
         done
     fi
 }
@@ -552,6 +569,7 @@ function usage()
     echo -e "\033[33m       -A string   grep by describe\033[0m"
     echo -e "\033[33m       -c number   cpu usage rate\033[0m"
     echo -e "\033[33m       -m number   memory in MB\033[0m"
+    echo -e "\033[33m       -i string   image dir\033[0m"
 }
 
 function clear_env()
@@ -618,7 +636,7 @@ function main()
         exit 1
     fi
   
-    while getopts u:t:c:s:e:r:p:m:g:a:A:vhzfdTDlS option
+    while getopts u:t:c:s:e:r:p:m:g:a:A:i:vhzfdTDlS option
     do
         case "$option"
         in
@@ -660,6 +678,7 @@ function main()
                 prepare
                 enter_virtual
                 exit 0;;
+            i) imagedir=$OPTARG;;
             S)
                 for id in `ls $basepath/`
                 do
