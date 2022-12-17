@@ -1,6 +1,6 @@
 #!/bin/bash
 
-version="version 1.0.1"
+version="version 1.0.2"
 
 basepath="/tmp/virtualization"
 def_program="/bin/bash"
@@ -9,6 +9,7 @@ daemon_def_program="sh $0 -z"
 describeparam=""
 ipparam=""
 
+isdaemon=false
 force=false
 memory=0
 cpu=0
@@ -155,7 +156,7 @@ function ip_mapping()
     vethin="veth$[$(date +%s%N)%1000000]"
     vethout="veth$[$(date +%s%N)%1000000]"
 
-    echo -e "\033[33m\nMappingMode:\nnetns[$virnetns] vethin[$vethin] vethout[$vethout] ipout[$ipout] ipin[$ipin] ipoutnomask[$ipinwithoutmask] ipinnomask[$ipinwithoutmask]\033[0m"
+    echo -e "\033[33m\nMappingMode:\nnetns[$virnetns] vethin[$vethin] vethout[$vethout] ipout[$ipout] ipin[$ipin] ipoutnomask[$ipoutwithoutmask] ipinnomask[$ipinwithoutmask]\033[0m"
 
     # 校验netns是否已经存在
     check_netns "$virnetns"
@@ -171,9 +172,9 @@ function ip_mapping()
         throw 1
     fi
 
-    check_ip_exist "$ipout"
+    check_ip_exist "$ipoutwithoutmask"
     if [[ $? == 1 ]];then
-        echo -e "\033[31mipout $ipout is exist, please set another ipout\033[0m"
+        echo -e "\033[31mipout $ipoutwithoutmask is exist, please set another ipout\033[0m"
         throw 1
     fi
 
@@ -330,12 +331,16 @@ function Program()
         echo ""
         while read line
         do
-        printf "\033[33m%-16s: \033[0m" ${line%%:*}
-        echo -e "\033[33m${line##*:}\033[0m"
+        printf "\033[33m%-16s: \033[0m" ${line%%⇒*}
+        echo -e "\033[33m${line##*⇒}\033[0m"
         done < $infopath
     fi
 
-    echo -e "\033[33m\nvirtual[$id] start!!!\033[0m"
+    if [[ $isdaemon == true ]];then
+        echo -e "\033[33m\nvirtual[$id] start deamon!!!\033[0m"
+    else
+        echo -e "\033[33m\nvirtual[$id] start!!!\033[0m"
+    fi
     touch $runpath # 通知父进程
 
     if [[ "$imagedir" != "" ]];then
@@ -369,18 +374,21 @@ function Program()
 
 function list()
 {
+    num=0
     for id in `ls $basepath/`
     do
         echo "---------"
         prepare
         if [ -f $infopath ]; then
+            num=`expr $num + 1`
             while read line
             do
-            printf "%-16s: " ${line%%:*}
-            echo ${line##*:}
+            printf "%-16s: " ${line%%⇒*}
+            echo ${line##*⇒}
             done < $infopath
         fi
     done
+    echo -e "\033[33mvirtualization count: $num\033[0m"
 }
 
 function is_process_exist()
@@ -424,7 +432,7 @@ function stop()
         fi
         sleep 0.1
         if [[ $stopppid != "" ]];then
-            pstree ${line##*:} -p|awk 'BEGIN{ FS="(";RS=")" } NF>1 {print $NF}'|xargs kill >/dev/null 2>&1
+            pstree ${line##*⇒} -p|awk 'BEGIN{ FS="(";RS=")" } NF>1 {print $NF}'|xargs kill >/dev/null 2>&1
 
         fi
     fi
@@ -433,25 +441,31 @@ function stop()
 function control_memory()
 {
     if [ $memory != 0 ]; then
-        memory=`expr $memory \* 1048576`
-        mkdir -p /sys/fs/cgroup/memory/"virtual-$id"
+        if [ ! -d /sys/fs/cgroup/memory/"virtual-$id" ];then
+            mkdir -p /sys/fs/cgroup/memory/"virtual-$id"
+            memory=`expr $memory \* 1048576`
+            echo "$memory" > /sys/fs/cgroup/memory/"virtual-$id"/memory.limit_in_bytes
+            memory=`expr $memory \/ 1048576`
+        fi
         echo "$1" >> /sys/fs/cgroup/memory/"virtual-$id"/cgroup.procs
+
         pidarr=`pstree -p $1 |awk 'BEGIN{ FS="(";RS=")" } NF>1 {print $NF}'|xargs echo`
         for(( i=0;i<${#pidarr[@]};i++)) 
         do
             echo "${array[i]}" >> /sys/fs/cgroup/memory/"virtual-$id"/cgroup.procs >/dev/null 2>&1
         done
-        echo "$memory" > /sys/fs/cgroup/memory/"virtual-$id"/memory.limit_in_bytes
-        memory=`expr $memory \/ 1048576`
     fi
 }
 
 function control_cpu()
 {
     if [ $cpu != 0 ]; then
-        mkdir -p /sys/fs/cgroup/cpu/"virtual-$id"
-        echo ${cpu}000 > /sys/fs/cgroup/cpu/"virtual-$id"/cpu.cfs_quota_us
+        if [ ! -d /sys/fs/cgroup/cpu/"virtual-$id" ];then
+            mkdir -p /sys/fs/cgroup/cpu/"virtual-$id"
+            echo ${cpu}000 > /sys/fs/cgroup/cpu/"virtual-$id"/cpu.cfs_quota_us
+        fi
         echo "$1" >>  /sys/fs/cgroup/cpu/"virtual-$id"/tasks
+
         pidarr=`pstree -p $1 |awk 'BEGIN{ FS="(";RS=")" } NF>1 {print $NF}'|xargs echo`
         for(( i=0;i<${#pidarr[@]};i++)) 
         do
@@ -467,8 +481,8 @@ function get_param_in_file()
     if [ -f $1 ];then
         while read line
         do
-            if [[ $line == $2:* ]]; then
-                get_param_res=${line##*:}
+            if [[ $line == $2⇒* ]]; then
+                get_param_res=${line##*⇒}
                 return
             fi
         done < $1
@@ -486,6 +500,15 @@ function enter_virtual()
     get_param_in_file $infopath pid
     if [[ $get_param_res != "" ]];then
         pid=$get_param_res
+
+        get_param_in_file $infopath cpu
+        cpu=$get_param_res
+
+        get_param_in_file $infopath memoryMB
+        memory=$get_param_res
+
+        control_cpu "$$"
+        control_memory "$$"
 
         get_param_in_file $infopath netns
         virnetns=$get_param_res
@@ -543,8 +566,8 @@ function check_describe()
                 echo "---------"
                 while read line
                 do
-                    printf "%-16s: " ${line%%:*}
-                    echo ${line##*:}
+                    printf "%-16s: " ${line%%⇒*}
+                    echo ${line##*⇒}
                 done < $infopath
             fi
         fi
@@ -559,7 +582,7 @@ function usage()
     echo -e "\033[33mOptions:\033[0m"
     echo -e "\033[33m       -r string   program (default: /bin/bash)\033[0m"
     echo -e "\033[33m       -p string   ip (-p ipout=ipin / -p ipin)\033[0m"
-    echo -e "\033[33m       -d          daemon\033[0m"
+    echo -e "\033[33m       -d          daemon start\033[0m"
     echo -e "\033[33m       -l          list all virtualization\033[0m"
     echo -e "\033[33m       -S          stop all virtualization\033[0m"
     echo -e "\033[33m       -s string   stop virtualid\033[0m"
@@ -571,12 +594,15 @@ function usage()
     echo -e "\033[33m       -c number   cpu usage rate\033[0m"
     echo -e "\033[33m       -m number   memory in MB\033[0m"
     echo -e "\033[33m       -i string   image dir\033[0m"
+    echo -e "\033[33m       -C          clear invalid env data\033[0m"
+    echo -e "\033[33m       -t string   top virtualid\033[0m"
+    echo -e "\033[33m       -T          top all virtualization\033[0m"
 }
 
 function clear_env()
 {
     tmpid=$id
-    # 先清除所有已失效的memory 和 cgroup
+    # 清除所有已失效的memory 和 cgroup
     for fsname in `ls /sys/fs/cgroup/memory/`
     do
         if [[ $fsname == virtual-* ]]; then
@@ -613,9 +639,23 @@ function clear_env()
     prepare
 }
 
+function yes_or_no()
+{
+    if [[ $force == false ]];then
+        while true; do
+            read -p "$1" yn
+            case $yn in
+                [Yy]* ) break;;
+                [Nn]* ) exit 0;;
+                * ) echo -e "\033[31mplease input yes or no.\033[0m";;
+            esac
+        done
+    fi
+}
+
 function main()
 {
-    #echo "main:$# $@ ||| [$1], [$2], [$3], [$4], [$5]"
+    #echo "main:$# $@ ||| [$1], [$2], [$3], [$4], [$5], [$6], [$7], [$8], [$9]"
     check_software "unshare"
     check_software "nsenter"
     check_software "pstree"
@@ -637,7 +677,7 @@ function main()
         exit 1
     fi
   
-    while getopts u:t:c:s:e:r:p:m:g:a:A:i:vhzfdTDlS option
+    while getopts u:t:c:s:e:r:p:m:g:a:A:i:vhzfdCTDlS option
     do
         case "$option"
         in
@@ -667,20 +707,38 @@ function main()
                 done
                 exit 0;;
             s) 
+                yes_or_no "Are you sure stop virtualization[$OPTARG]? input y or n: "
                 stop $OPTARG
                 exit 0;;
             e) id=$OPTARG
                 prepare;;
             r) program=$OPTARG;;
             p) ipparam=$OPTARG;;
-            m) memory=$OPTARG;;
-            c) cpu=$OPTARG;;
+            m) memory=$OPTARG
+                if [[ "$memory" =~ ^[1-9]+$ ]];then
+                    :
+                else
+                    echo -e "\033[31mmemory must digit\033[0m"
+                    exit 1
+                fi
+                ;;
+            c) cpu=$OPTARG
+                if [[ "$cpu" =~ ^[1-9]+$ ]];then
+                    :
+                else
+                    echo -e "\033[31mcpu must digit\033[0m"
+                    exit 1
+                fi
+                ;;
             g) id=$OPTARG
                 prepare
                 enter_virtual
                 exit 0;;
-            i) imagedir=$OPTARG;;
+            i)  echo -e "\033[31mcan not support image\033[0m"
+                exit 0
+                imagedir=$OPTARG;;
             S)
+                yes_or_no "Are you sure stop all virtualization? It affects everyone!!! input y or n: "
                 for id in `ls $basepath/`
                 do
                     stop $id
@@ -701,7 +759,10 @@ function main()
                 if [[ "$program" == "$def_program" ]];then
                     program=$daemon_def_program # 更换默认程序
                 fi
+                isdaemon=true
                 ;;
+            C) clear_env
+                exit 0;;
             l) list
                 exit 0;;
             \?) usage
@@ -714,7 +775,7 @@ function main()
         Program
         echo -e "\033[31mvirtual[$id] stopped!!!\033[0m"
     else
-        time="$(date "+%Y/%m/%d %H.%M.%S")"
+        time="$(date "+%Y.%m.%d %H:%M:%S")"
         id=$[$(date +%s%N)%1000000]
         prepare
         mkdir -p $idpath
@@ -731,20 +792,20 @@ function main()
                 sleep 0.5
                 if [ -f $infopath ]; then  # 创建info后，写入 ppid
                     {
-                        echo "virtualid:$id"
-                        echo "user:$user"
-                        echo "netns:$virnetns"
-                        echo "ip:$ipparam" 
-                        echo "memoryMB:$memory"
-                        echo "program:$program"
-                        echo "cpu:$cpu"
+                        echo "virtualid⇒$id"
+                        echo "user⇒$user"
+                        echo "netns⇒$virnetns"
+                        echo "ip⇒$ipparam" 
+                        echo "memoryMB⇒$memory"
+                        echo "program⇒$program"
+                        echo "cpu⇒$cpu"
                         if [[ "$describeparam" == "" ]];then
-                            echo "describe:virtual-$id"
+                            echo "describe⇒virtual-$id"
                         else
-                            echo "describe:$describeparam"
+                            echo "describe⇒$describeparam"
                         fi
-                        echo "ppid:$$"
-                        echo "createtime:$time"
+                        echo "ppid⇒$$"
+                        echo "createtime⇒$time"
                     } >> "$infopath"
 
                     for((i=0;i<30;i++)); do
@@ -757,7 +818,7 @@ function main()
                             if [[ $pid == 0 ]];then
                                 continue
                             fi
-                            echo "pid:$pid" >> "$infopath"                            
+                            echo "pid⇒$pid" >> "$infopath"                            
                             return
                         fi
                     done
