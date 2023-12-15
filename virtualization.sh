@@ -377,9 +377,9 @@ function list()
     num=0
     for id in `ls $basepath/`
     do
-        echo "---------"
         prepare
         if [ -f $infopath ]; then
+            echo "---------"
             num=`expr $num + 1`
             while read line
             do
