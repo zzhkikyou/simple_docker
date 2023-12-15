@@ -734,7 +734,7 @@ function main()
             r) program=$OPTARG;;
             p) ipparam=$OPTARG;;
             m) memory=$OPTARG
-                if [[ "$memory" =~ ^[1-9]+$ ]];then
+                if [[ "$memory" =~ ^[0-9]+$ ]];then
                     :
                 else
                     echo -e "\033[31m内存参数必须是数字\033[0m"
@@ -742,7 +742,7 @@ function main()
                 fi
                 ;;
             c) cpu=$OPTARG
-                if [[ "$cpu" =~ ^[1-9]+$ ]];then
+                if [[ "$cpu" =~ ^[0-9]+$ ]];then
                     :
                 else
                     echo -e "\033[31mCPU参数必须是数字\033[0m"
