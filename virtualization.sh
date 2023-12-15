@@ -1,6 +1,6 @@
 #!/bin/bash
 
-version="version 1.0.2"
+version="version 1.0.3"
 
 basepath="/tmp/virtualization"
 def_program="/bin/bash"
