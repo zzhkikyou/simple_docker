@@ -1,2 +1,5 @@
 
 .DS_Store
+unittest/busy_loop
+unittest/mem
+unittest/print_loop
