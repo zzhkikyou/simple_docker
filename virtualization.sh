@@ -830,14 +830,6 @@ function main()
                     for((i=0;i<30;i++)); do
                         sleep 0.5
                         if [ -f $runpath ];then
-                            # pid=0
-                            # pstree -Sp $$
-                            # pstree -p $$ |grep "unshare("|awk 'BEGIN{ FS="(";RS=")" } NF>1 {print $NF}'|xargs echo
-                            # pid=`pstree -p $$ |grep "unshare("|awk 'BEGIN{ FS="(";RS=")" } NF>1 {print $NF}'|xargs echo |awk -F' ' '{print $3}'|xargs echo`
-                            # #pid=$(pgrep -P $$ "unshare")
-                            # if [[ $pid == 0 ]];then
-                            #     continue
-                            # fi
                             children_pids=$(pgrep -P $$)
 
                             # 遍历子进程，查找名为unshare的进程
